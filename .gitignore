@@ -2,3 +2,4 @@
 /.venv
 /bot.session
 /opntest.py
+bot.session-journal

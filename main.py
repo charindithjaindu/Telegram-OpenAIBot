@@ -46,7 +46,21 @@ async def start(event):
         [Button.inline("➕ Create Agent", b"create_agent")],
         [Button.inline("📜 List Existing Agents", b"list_agents")]
     ]
-    await event.respond("👋 Welcome! Choose an option:", buttons=buttons)
+    await event.respond(
+        "👋 Welcome to the AI Chatbot Manager!\n\n"
+        "You can use the **menu buttons** or type commands:\n"
+        "✅ **/create** - Create a new chatbot\n"
+        "✅ **/list** - View your chatbots\n"
+        "✅ **/help** - Show help menu",
+        buttons=buttons
+    )
+
+# /create Command
+@bot.on(events.NewMessage(pattern='/create'))
+async def create(event):
+    user_id = event.sender_id
+    users_collection.update_one({"_id": user_id}, {"$set": {"state": "creating_bot"}}, upsert=True)
+    await event.respond("✏️ Send the name of your chatbot.")
 
 # Handle Inline Buttons
 @bot.on(events.CallbackQuery)
@@ -75,8 +89,37 @@ async def callback_handler(event):
 
         elif data.startswith("select_"):
             bot_name = data.replace("select_", "")
+            users_collection.update_one({"_id": user_id}, {"$set": {"selected_bot": bot_name}})
+
+            buttons = [
+                [Button.inline("✏️ Edit Instructions", b"edit_bot")],
+                [Button.inline("🗑️ Delete Bot", b"delete_bot")],
+                [Button.inline("💬 Chat with Bot", f"chat_{bot_name}")],
+                [Button.inline("🔙 Back", b"list_agents")]
+            ]
+            await event.respond(f"🤖 Chatbot '{bot_name}' selected! Choose an action:", buttons=buttons)
+            
+        elif data == "edit_bot":
+            selected_bot = users_collection.find_one({"_id": user_id}).get("selected_bot")
+            if selected_bot:
+                users_collection.update_one({"_id": user_id}, {"$set": {"state": "editing_bot"}})
+                await event.respond(f"✏️ Send the new instructions for '{selected_bot}'.")
+
+        elif data == "delete_bot":
+            selected_bot = users_collection.find_one({"_id": user_id}).get("selected_bot")
+            if selected_bot:
+                chatbots_collection.delete_one({"owner": user_id, "name": selected_bot})
+                users_collection.update_one({"_id": user_id}, {"$unset": {"selected_bot": ""}})
+                await event.respond(f"🗑️ Chatbot '{selected_bot}' deleted successfully!")
+
+        elif data.startswith("chat_"):
+            bot_name = data.replace("chat_", "")
             users_collection.update_one({"_id": user_id}, {"$set": {"state": "chatting", "chatbot": bot_name}})
             await event.respond(f"🤖 Chatbot '{bot_name}' selected!\n\nType your message to chat.\nTo stop, send `/stop`.")
+
+        elif data == "main_menu":
+            await start(event)
+
     except:
         buttons = [
             [Button.inline("➕ Create Agent", b"create_agent")],
@@ -114,6 +157,13 @@ async def handle_messages(event):
             users_collection.update_one({"_id": user_id}, {"$unset": {"state": "", "bot_name": ""}})  # Clear state
             await event.respond(f"✅ Chatbot '{bot_name}' created successfully! Use the menu to chat.")
 
+        elif user_state == "editing_bot":
+            bot_name = user_data.get("selected_bot")
+            if bot_name:
+                chatbots_collection.update_one({"owner": user_id, "name": bot_name}, {"$set": {"instructions": text}})
+                users_collection.update_one({"_id": user_id}, {"$unset": {"state": ""}})
+                await event.respond(f"✅ Instructions for '{bot_name}' updated successfully!")
+
         # Step 3: User is chatting with a bot
         elif user_state == "chatting":
             bot_name = user_data.get("chatbot")
@@ -127,7 +177,7 @@ async def handle_messages(event):
                 prompt = f"{chatbot['instructions']}\nUser: {text}\nAI:"
                 ai_response = get_openai_response(prompt)
 
-                # Store conversation in MongoDB
+                # Store conversation in MongoDB 
                 chatbots_collection.update_one({"owner": user_id, "name": bot_name}, {
                     "$push": {"messages": {"user": text, "bot": ai_response}}
                 })
