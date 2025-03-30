@@ -62,6 +62,21 @@ async def create(event):
     users_collection.update_one({"_id": user_id}, {"$set": {"state": "creating_bot"}}, upsert=True)
     await event.respond("✏️ Send the name of your chatbot.")
 
+
+# /list Command
+@bot.on(events.NewMessage(pattern='/list'))
+async def list_bots(event):
+    user_id = event.sender_id
+    bots = chatbots_collection.find({"owner": user_id})
+    bot_buttons = [[Button.inline(bot["name"], f"select_{bot['name']}")] for bot in bots]
+    bot_buttons.append([Button.inline("🔙 Back", b"main_menu")])
+
+    if bot_buttons:
+        await event.respond("📜 Your chatbots:", buttons=bot_buttons)
+    else:
+        await event.respond("❌ No chatbots found. Use /create to make one.")
+        
+        
 # Handle Inline Buttons
 @bot.on(events.CallbackQuery)
 async def callback_handler(event):
@@ -133,6 +148,10 @@ async def callback_handler(event):
 async def handle_messages(event):
     user_id = event.sender_id
     text = event.message.text
+    if text.startswith("/"):
+        return
+    if not text:
+        return
     await bot(SetTypingRequest(peer=user_id, action=SendMessageTypingAction()))
     
     try:
