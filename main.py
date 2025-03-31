@@ -132,7 +132,7 @@ async def image(event):
 async def list_bots(event):
     user_id = event.sender_id
     bots = chatbots_collection.find({"owner": user_id})
-    if bots.count() == 0:
+    if chatbots_collection.count_documents({"owner": user_id}) == 0:
         await event.respond("❌ No chatbots found. Use /create to make one.")
         return
     bot_buttons = [[Button.inline(bot["name"], f"select_{bot['name']}")] for bot in bots]
