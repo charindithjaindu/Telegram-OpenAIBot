@@ -1,4 +1,5 @@
 import os
+import base64
 from openai import OpenAI
 from telethon import TelegramClient, events, Button
 from telethon.tl.functions.messages import SetTypingRequest
@@ -25,9 +26,13 @@ chatbots_collection = db["chatbots"]
 bot = TelegramClient('bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 openAI_client = OpenAI()
 
+DATA_DIR = "data"
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
+    print(f"Created directory: {DATA_DIR}")
 
 # OpenAI API Function
-def get_openai_response(prompt):
+async def get_openai_response(prompt):
     try:
         response = openAI_client.responses.create(
             model="gpt-4o",
@@ -38,6 +43,59 @@ def get_openai_response(prompt):
         return response.output_text
     except Exception as e:
         return f"Error: {str(e)}"
+
+async def process_image_with_gpt4o(image_path, caption=None):
+    """Process image using GPT-4o Vision"""
+    try:
+        # Read the image file
+        with open(image_path, "rb") as image_file:
+            image_data = image_file.read()
+            
+        # Convert image to base64
+        base64_image = base64.b64encode(image_data).decode('utf-8')
+        
+        prompt_text = caption if caption else "Describe this image in detail."
+
+        # Call OpenAI API with the image
+        response = openAI_client.responses.create(
+            model="gpt-4o",
+            tools=[{ "type": "web_search_preview" }],
+            tool_choice="auto",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": prompt_text },
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:image/jpeg;base64,{base64_image}",
+                        },
+                    ],
+                }
+            ],
+        )
+        
+        # Delete the image file after processing
+        try:
+            os.remove(image_path)
+            print(f"Deleted image file: {image_path}")
+        except Exception as e:
+            print(f"Error deleting image file {image_path}: {e}")
+        
+        return response.output_text
+    except Exception as e:
+        print(f"Error processing image with GPT-4o: {e}")
+        
+        # Try to delete the image file even if processing failed
+        try:
+            if os.path.exists(image_path):
+                os.remove(image_path)
+                print(f"Deleted image file after error: {image_path}")
+        except Exception as delete_error:
+            print(f"Error deleting image file after processing error: {delete_error}")
+            
+        return f"Sorry, I couldn't analyze this image. Error: {str(e)}"
+
 
 # Start and Main Menu
 @bot.on(events.NewMessage(pattern='/start'))
@@ -68,6 +126,9 @@ async def create(event):
 async def list_bots(event):
     user_id = event.sender_id
     bots = chatbots_collection.find({"owner": user_id})
+    if bots.count() == 0:
+        await event.respond("❌ No chatbots found. Use /create to make one.")
+        return
     bot_buttons = [[Button.inline(bot["name"], f"select_{bot['name']}")] for bot in bots]
     bot_buttons.append([Button.inline("🔙 Back", b"main_menu")])
 
@@ -75,7 +136,7 @@ async def list_bots(event):
         await event.respond("📜 Your chatbots:", buttons=bot_buttons)
     else:
         await event.respond("❌ No chatbots found. Use /create to make one.")
-        
+ 
         
 # Handle Inline Buttons
 @bot.on(events.CallbackQuery)
@@ -136,23 +197,45 @@ async def callback_handler(event):
             await start(event)
 
     except:
-        buttons = [
-            [Button.inline("➕ Create Agent", b"create_agent")],
-            [Button.inline("📜 List Existing Agents", b"list_agents")]
-        ]
-        await event.respond("👋 Welcome! Choose an option:", buttons=buttons)
-        
+        await start(event)
 
 # Handle Messages (Create Bot & Chatting)
 @bot.on(events.NewMessage)
 async def handle_messages(event):
     user_id = event.sender_id
+    await bot(SetTypingRequest(peer=user_id, action=SendMessageTypingAction()))
+
+    
+    if event.photo:
+        m = await event.respond("Processing your image... Please wait.")
+        try:
+            caption = event.message.message if event.message.message else None
+            # Create file path with user ID
+            image_path = os.path.join(DATA_DIR, f"{user_id}.jpg")
+            
+            # Download the photo to the specified path
+            await bot.download_media(event.photo, image_path)
+            print(f"Downloaded photo from user {user_id} to {image_path}")
+            
+            # Process with GPT-4o including caption
+            analysis = await process_image_with_gpt4o(image_path, caption)
+            
+            # Send the analysis back to the user
+            await event.respond(analysis)
+            await m.delete()  # Delete the message indicating processing is in progress
+            
+        except Exception as e:
+            print(f"Error handling photo from user {user_id}: {e}")
+            await event.respond(f"Sorry, I encountered an error: {str(e)}")
+
+        return
+    
     text = event.message.text
+    
     if text.startswith("/"):
         return
     if not text:
         return
-    await bot(SetTypingRequest(peer=user_id, action=SendMessageTypingAction()))
     
     try:
         # Get user state
@@ -194,7 +277,7 @@ async def handle_messages(event):
             chatbot = chatbots_collection.find_one({"owner": user_id, "name": bot_name})
             if chatbot:
                 prompt = f"{chatbot['instructions']}\nUser: {text}\nAI:"
-                ai_response = get_openai_response(prompt)
+                ai_response = await get_openai_response(prompt)
 
                 # Store conversation in MongoDB 
                 chatbots_collection.update_one({"owner": user_id, "name": bot_name}, {
