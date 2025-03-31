@@ -121,9 +121,9 @@ async def create(event):
     await event.respond("✏️ Send the name of your chatbot.")
 
 
-# /generate Command
-@bot.on(events.NewMessage(pattern='/generate'))
-async def generate(event):
+# /image Command
+@bot.on(events.NewMessage(pattern='/image'))
+async def image(event):
     await event.respond("✏️ send image to process images (you can send your prompt as caption with photo).")
 
 
