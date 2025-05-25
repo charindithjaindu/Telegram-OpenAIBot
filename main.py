@@ -125,7 +125,7 @@ async def generate_image_with_dalle(prompt, user_id):
         else:
             raise Exception(f"Failed to download image: {response.status_code}")
     except Exception as e:
-        print(f"Error generating image with DALL-E: {e}")
+        print(f"Error generating images: {e}")
         return None
 
 
@@ -135,7 +135,8 @@ async def start(event):
     buttons = [
         [Button.inline("➕ Create Agent", b"create_agent")],
         [Button.inline("📜 List Existing Agents", b"list_agents")],
-        [Button.inline("🎨 Generate Image", b"generate_image")]
+        [Button.inline("🎨 Generate Image", b"generate_image")],
+        [Button.inline("🔍 Analyze Image", b"analyze_image")]
     ]
     await event.respond(
         "👋 Welcome to the AI Chatbot Manager!\n\n"
@@ -143,7 +144,7 @@ async def start(event):
         "✅ **/create** - Create a new chatbot\n"
         "✅ **/list** - View your chatbots\n"
         "✅ **/help** - Show help menu\n"
-        "✅ **/image** - Generate images with DALL-E",
+        "✅ **/image** - Generate images",
         buttons=buttons
     )
 
@@ -165,7 +166,7 @@ async def image(event):
         {"$set": {"state": "waiting_for_image_prompt"}}
     )
     await event.respond(
-        "🎨 Please enter a detailed description of the image you want to generate with DALL-E.\n\n"
+        "🎨 Please enter a detailed description of the image you want to generate.\n\n"
         "Be specific and creative with your description for best results!"
     )
 
@@ -221,6 +222,17 @@ async def callback_handler(event):
             await event.respond(
                 "🎨 Please enter a detailed description of the image you want to generate with DALL-E.\n\n"
                 "Be specific and creative with your description for best results!"
+            )
+            
+        elif data == "analyze_image":
+            # Prompt user to upload an image for analysis
+            users_collection.update_one(
+                {"_id": user_id}, 
+                {"$set": {"state": "waiting_for_image_analysis"}}
+            )
+            await event.respond(
+                "🔍 Please upload an image you'd like me to analyze.\n\n"
+                "You can also add a caption with specific questions about the image."
             )
             
         elif data == "analyze_photo":
@@ -362,7 +374,7 @@ async def handle_messages(event):
 
         # User is sending an image generation prompt
         elif user_state == "waiting_for_image_prompt":
-            m = await event.respond("🎨 Generating your image with DALL-E... Please wait.")
+            m = await event.respond("🎨 Generating your image... Please wait.")
             try:
                 # Generate image with DALL-E
                 image_path = await generate_image_with_dalle(text, user_id)
@@ -379,7 +391,7 @@ async def handle_messages(event):
                     try:
                         os.remove(image_path)
                     except Exception as e:
-                        print(f"Error deleting DALL-E image file: {e}")
+                        print(f"Error deleting image file: {e}")
                 else:
                     await event.respond("Sorry, I couldn't generate the image. Please try again with a different prompt.")
                 
@@ -387,7 +399,7 @@ async def handle_messages(event):
                 users_collection.update_one({"_id": user_id}, {"$unset": {"state": ""}})
                 
             except Exception as e:
-                print(f"Error handling DALL-E image generation: {e}")
+                print(f"Error handling image generation: {e}")
                 traceback.print_exc()
                 await event.respond(f"Sorry, I encountered an error while generating your image: {str(e)}")
                 users_collection.update_one({"_id": user_id}, {"$unset": {"state": ""}})
