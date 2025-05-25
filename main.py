@@ -96,20 +96,54 @@ async def process_image_with_gpt4o(image_path, caption=None):
             
         return f"Sorry, I couldn't analyze this image. Error: {str(e)}"
 
+async def generate_image_with_dalle(prompt, user_id):
+    """Generate an image using DALL-E 3"""
+    try:
+        # Call OpenAI API to generate image
+        response = openAI_client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1,
+        )
+        
+        # Get the image URL
+        image_url = response.data[0].url
+        
+        # Download the image
+        import requests
+        response = requests.get(image_url)
+        
+        if response.status_code == 200:
+            # Save the image to a file
+            image_path = os.path.join(DATA_DIR, f"dalle_{user_id}.jpg")
+            with open(image_path, "wb") as f:
+                f.write(response.content)
+            
+            return image_path
+        else:
+            raise Exception(f"Failed to download image: {response.status_code}")
+    except Exception as e:
+        print(f"Error generating image with DALL-E: {e}")
+        return None
+
 
 # Start and Main Menu
 @bot.on(events.NewMessage(pattern='/start'))
 async def start(event):
     buttons = [
         [Button.inline("➕ Create Agent", b"create_agent")],
-        [Button.inline("📜 List Existing Agents", b"list_agents")]
+        [Button.inline("📜 List Existing Agents", b"list_agents")],
+        [Button.inline("🎨 Generate Image", b"generate_image")]
     ]
     await event.respond(
         "👋 Welcome to the AI Chatbot Manager!\n\n"
         "You can use the **menu buttons** or type commands:\n"
         "✅ **/create** - Create a new chatbot\n"
         "✅ **/list** - View your chatbots\n"
-        "✅ **/help** - Show help menu",
+        "✅ **/help** - Show help menu\n"
+        "✅ **/image** - Generate images with DALL-E",
         buttons=buttons
     )
 
@@ -124,7 +158,16 @@ async def create(event):
 # /image Command
 @bot.on(events.NewMessage(pattern='/image'))
 async def image(event):
-    await event.respond("✏️ send image to process images (you can send your prompt as caption with photo).")
+    user_id = event.sender_id
+    # Set user state to waiting for image prompt
+    users_collection.update_one(
+        {"_id": user_id}, 
+        {"$set": {"state": "waiting_for_image_prompt"}}
+    )
+    await event.respond(
+        "🎨 Please enter a detailed description of the image you want to generate with DALL-E.\n\n"
+        "Be specific and creative with your description for best results!"
+    )
 
 
 # /list Command
@@ -168,6 +211,46 @@ async def callback_handler(event):
 
         elif data == "main_menu":
             await start(event)  # Return to the main menu
+            
+        elif data == "generate_image":
+            # Set user state to waiting for image prompt
+            users_collection.update_one(
+                {"_id": user_id}, 
+                {"$set": {"state": "waiting_for_image_prompt"}}
+            )
+            await event.respond(
+                "🎨 Please enter a detailed description of the image you want to generate with DALL-E.\n\n"
+                "Be specific and creative with your description for best results!"
+            )
+            
+        elif data == "analyze_photo":
+            # Retrieve the pending image path from the user's data
+            user_data = users_collection.find_one({"_id": user_id})
+            image_path = user_data.get("pending_image")
+            caption = user_data.get("image_caption")
+            
+            if image_path and os.path.exists(image_path):
+                m = await event.respond("🔍 Analyzing your image... Please wait.")
+                try:
+                    # Process with GPT-4o including caption
+                    analysis = await process_image_with_gpt4o(image_path, caption)
+                    
+                    # Send the analysis back to the user
+                    await event.respond(analysis)
+                    
+                    # Clear the pending image data
+                    users_collection.update_one(
+                        {"_id": user_id}, 
+                        {"$unset": {"pending_image": "", "image_caption": ""}}
+                    )
+                    
+                except Exception as e:
+                    print(f"Error processing image with GPT-4o: {e}")
+                    await event.respond(f"Sorry, I couldn't analyze this image. Error: {str(e)}")
+                finally:
+                    await m.delete()  # Delete the processing message
+            else:
+                await event.respond("❌ No image found to analyze or the image file was deleted.")
 
         elif data.startswith("select_"):
             bot_name = data.replace("select_", "")
@@ -213,7 +296,6 @@ async def handle_messages(event):
 
     
     if event.photo:
-        m = await event.respond("Processing your image... Please wait.")
         try:
             caption = event.message.message if event.message.message else None
             # Create file path with user ID
@@ -223,12 +305,18 @@ async def handle_messages(event):
             await bot.download_media(event.photo, image_path)
             print(f"Downloaded photo from user {user_id} to {image_path}")
             
-            # Process with GPT-4o including caption
-            analysis = await process_image_with_gpt4o(image_path, caption)
+            # Store the image path and caption in the user's data
+            users_collection.update_one(
+                {"_id": user_id}, 
+                {"$set": {"pending_image": image_path, "image_caption": caption}}
+            )
             
-            # Send the analysis back to the user
-            await event.respond(analysis)
-            await m.delete()  # Delete the message indicating processing is in progress
+            # Show the user a button to analyze the photo
+            buttons = [[Button.inline("🔍 Analyze Photo", b"analyze_photo")]]
+            await event.respond(
+                "📸 Photo received! Click the button below to analyze it with AI.", 
+                buttons=buttons
+            )
             
         except Exception as e:
             print(f"Error handling photo from user {user_id}: {e}")
@@ -272,6 +360,40 @@ async def handle_messages(event):
                 users_collection.update_one({"_id": user_id}, {"$unset": {"state": ""}})
                 await event.respond(f"✅ Instructions for '{bot_name}' updated successfully!")
 
+        # User is sending an image generation prompt
+        elif user_state == "waiting_for_image_prompt":
+            m = await event.respond("🎨 Generating your image with DALL-E... Please wait.")
+            try:
+                # Generate image with DALL-E
+                image_path = await generate_image_with_dalle(text, user_id)
+                
+                if image_path and os.path.exists(image_path):
+                    # Send the generated image
+                    await bot.send_file(
+                        user_id, 
+                        image_path, 
+                        caption="Here's your generated image! 🎨"
+                    )
+                    
+                    # Clean up the image file
+                    try:
+                        os.remove(image_path)
+                    except Exception as e:
+                        print(f"Error deleting DALL-E image file: {e}")
+                else:
+                    await event.respond("Sorry, I couldn't generate the image. Please try again with a different prompt.")
+                
+                # Clear the user state
+                users_collection.update_one({"_id": user_id}, {"$unset": {"state": ""}})
+                
+            except Exception as e:
+                print(f"Error handling DALL-E image generation: {e}")
+                traceback.print_exc()
+                await event.respond(f"Sorry, I encountered an error while generating your image: {str(e)}")
+                users_collection.update_one({"_id": user_id}, {"$unset": {"state": ""}})
+            finally:
+                await m.delete()  # Delete the processing message
+                
         # Step 3: User is chatting with a bot
         elif user_state == "chatting":
             bot_name = user_data.get("chatbot")
