@@ -144,7 +144,7 @@ async def start(event):
         "✅ **Create Agent** - Create a new chatbot\n"
         "✅ **List Existing Agents** - View your chatbots\n"
         "✅ **Generate Image** - Create images\n"
-        "✅ **Analyze Image** - Analyze and describe images"
+        "✅ **Analyze Image** - Analyze and describe images",
         buttons=buttons
     )
 
