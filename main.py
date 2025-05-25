@@ -140,11 +140,11 @@ async def start(event):
     ]
     await event.respond(
         "👋 Welcome to the AI Chatbot Manager!\n\n"
-        "You can use the **menu buttons** or type commands:\n"
-        "✅ **/create** - Create a new chatbot\n"
-        "✅ **/list** - View your chatbots\n"
-        "✅ **/help** - Show help menu\n"
-        "✅ **/image** - Generate images",
+        "You can use the **menu buttons** to interact with the bot:\n"
+        "✅ **Create Agent** - Create a new chatbot\n"
+        "✅ **List Existing Agents** - View your chatbots\n"
+        "✅ **Generate Image** - Create images\n"
+        "✅ **Analyze Image** - Analyze and describe images"
         buttons=buttons
     )
 
@@ -220,7 +220,7 @@ async def callback_handler(event):
                 {"$set": {"state": "waiting_for_image_prompt"}}
             )
             await event.respond(
-                "🎨 Please enter a detailed description of the image you want to generate with DALL-E.\n\n"
+                "🎨 Please enter a detailed description of the image you want to generate.\n\n"
                 "Be specific and creative with your description for best results!"
             )
             
